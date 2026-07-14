@@ -40,6 +40,23 @@ from streamlit_js_eval import get_geolocation
 APP_TITLE = "Generador de Informes Institucionales"
 DATA_FILE = "Datos Importantes.xlsx"
 PROGRAMAS = ["GREAT", "DARE", "VIFA", "MPAS", "PSCC"]
+
+# Actividades oficiales mostradas para el Programa de Seguridad Comunitaria y Comercial.
+# Para los demás programas, la aplicación continúa tomando las actividades desde el Excel.
+ACTIVIDADES_POR_PROGRAMA = {
+    "PSCC": [
+        "Curso básico",
+        "Creación del Comité de Seguridad Comunitaria",
+        "Seguimiento a Comités de Seguridad Comunitaria",
+        "Capacitación en Gestión",
+        "Capacitación en Participación Ciudadana",
+        "Capacitación en Denuncia Comunitaria",
+        "Capacitación en Cultura Preventiva",
+        "Actividad de Cohesión Social",
+        "Actividad de Recuperación de Espacios Públicos",
+        "Otras Actividades de Seguridad Comunitaria",
+    ]
+}
 PRIMARY_BLUE = "#173B67"
 SECONDARY_BLUE = "#267FB8"
 LIGHT_BLUE = "#EAF3F8"
@@ -523,12 +540,34 @@ def main() -> None:
     if "longitud" not in st.session_state:
         st.session_state.longitud = -84.0907
 
-    with st.form("formulario_informe", clear_on_submit=False):
+    # Los controles no se colocan dentro de st.form porque los selectores dependientes
+    # (región → delegación y provincia → cantón → distrito) deben actualizarse de inmediato.
+    with st.container(border=True):
         st.subheader("1. Datos generales de la visita")
         c1, c2 = st.columns(2)
         regiones = catalogos.regiones_delegaciones["Dirección Regional"].dropna().unique().tolist()
         with c1:
-            direccion_regional = st.selectbox("Dirección Regional que realiza la visita *", regiones, index=None, placeholder="Seleccione una Dirección Regional")
+            direccion_regional = st.selectbox(
+                "Dirección Regional que realiza la visita *",
+                regiones,
+                index=None,
+                placeholder="Seleccione una Dirección Regional",
+                key="direccion_regional",
+            )
+            delegaciones = []
+            if direccion_regional:
+                delegaciones = catalogos.regiones_delegaciones.loc[
+                    catalogos.regiones_delegaciones["Dirección Regional"] == direccion_regional,
+                    "Delegación",
+                ].dropna().unique().tolist()
+            delegacion_visitada = st.selectbox(
+                "Delegación Policial visitada *",
+                delegaciones,
+                index=None,
+                placeholder="Seleccione una delegación",
+                disabled=not direccion_regional,
+                key="delegacion_visitada",
+            )
         with c2:
             modalidad = st.radio("Modalidad de visita *", ["Presencial", "Virtual", "Otro"], horizontal=True)
 
@@ -542,64 +581,93 @@ def main() -> None:
         funcionarios_realizan = st.text_area("Nombre de la(s) persona(s) funcionaria(s) que realiza(n) la visita *", height=90)
         funcionarios_atienden = st.text_area("Nombre de la(s) persona(s) funcionaria(s) que atiende(n) la visita *", height=90)
 
-        st.subheader("2. Ubicación territorial y dependencia visitada")
+    with st.container(border=True):
+        st.subheader("2. Ubicación territorial")
         provincias = catalogos.territorios["Provincia"].unique().tolist()
         t1, t2, t3 = st.columns(3)
         with t1:
-            provincia = st.selectbox("Provincia *", provincias, index=None, placeholder="Seleccione una provincia")
-        cantones = [] if not provincia else catalogos.territorios.loc[catalogos.territorios["Provincia"] == provincia, "Cantón"].unique().tolist()
+            provincia = st.selectbox(
+                "Provincia *", provincias, index=None,
+                placeholder="Seleccione una provincia", key="provincia"
+            )
+        cantones = [] if not provincia else catalogos.territorios.loc[
+            catalogos.territorios["Provincia"] == provincia, "Cantón"
+        ].dropna().unique().tolist()
         with t2:
-            canton = st.selectbox("Cantón *", cantones, index=None, placeholder="Seleccione un cantón", disabled=not provincia)
+            canton = st.selectbox(
+                "Cantón *", cantones, index=None,
+                placeholder="Seleccione un cantón", disabled=not provincia, key="canton"
+            )
         distritos = [] if not canton else catalogos.territorios.loc[
-            (catalogos.territorios["Provincia"] == provincia) & (catalogos.territorios["Cantón"] == canton), "Distritos"
-        ].unique().tolist()
+            (catalogos.territorios["Provincia"] == provincia)
+            & (catalogos.territorios["Cantón"] == canton),
+            "Distritos",
+        ].dropna().unique().tolist()
         with t3:
-            distrito = st.selectbox("Distrito *", distritos, index=None, placeholder="Seleccione un distrito", disabled=not canton)
+            distrito = st.selectbox(
+                "Distrito *", distritos, index=None,
+                placeholder="Seleccione un distrito", disabled=not canton, key="distrito"
+            )
 
         top20_auto = es_top20_automatico(catalogos, provincia or "", canton or "", distrito or "")
-        d1, d2 = st.columns(2)
-        with d1:
-            if top20_auto is None:
-                es_top20 = st.radio("¿El distrito corresponde al Top 20? *", ["No", "Sí"], horizontal=True) == "Sí"
-                if not catalogos.top20_col:
-                    st.caption("El Excel aún no incluye una columna Top 20; por ahora la clasificación se registra manualmente.")
-            else:
-                es_top20 = top20_auto
-                st.info(f"Clasificación Top 20 detectada en el Excel: **{'Sí' if es_top20 else 'No'}**")
-        delegaciones = []
-        if direccion_regional:
-            delegaciones = catalogos.regiones_delegaciones.loc[
-                catalogos.regiones_delegaciones["Dirección Regional"] == direccion_regional, "Delegación"
-            ].dropna().unique().tolist()
-        with d2:
-            delegacion_visitada = st.selectbox("Delegación Policial visitada *", delegaciones, index=None, placeholder="Seleccione una delegación", disabled=not direccion_regional)
+        if top20_auto is None:
+            es_top20 = st.radio("¿El distrito corresponde al Top 20? *", ["No", "Sí"], horizontal=True) == "Sí"
+            if not catalogos.top20_col:
+                st.caption("El Excel aún no incluye una columna Top 20; por ahora la clasificación se registra manualmente.")
+        else:
+            es_top20 = top20_auto
+            st.info(f"Clasificación Top 20 detectada en el Excel: **{'Sí' if es_top20 else 'No'}**")
 
-        referencia_lugar = st.text_input("Referencia adicional del lugar", placeholder="Ejemplo: oficina regional, centro educativo, salón comunal, comercio u otro punto de referencia")
+        referencia_lugar = st.text_input(
+            "Referencia adicional del lugar",
+            placeholder="Ejemplo: oficina regional, centro educativo, salón comunal, comercio u otro punto de referencia",
+        )
 
+    with st.container(border=True):
         st.subheader("3. Programa, actividad y línea de acción")
         p1, p2 = st.columns([1, 2])
         with p1:
-            programa = st.selectbox("Programa Policial Preventivo *", PROGRAMAS, index=None, placeholder="Seleccione un programa")
-        act_df = catalogos.actividades[catalogos.actividades["Programa"].str.upper() == (programa or "").upper()] if programa else pd.DataFrame()
-        actividades = act_df["Actividad Realizada"].dropna().unique().tolist() if not act_df.empty else []
+            programa = st.selectbox(
+                "Programa Policial Preventivo *", PROGRAMAS, index=None,
+                placeholder="Seleccione un programa", key="programa"
+            )
+
+        act_df = catalogos.actividades[
+            catalogos.actividades["Programa"].str.upper() == (programa or "").upper()
+        ] if programa else pd.DataFrame()
+
+        if programa in ACTIVIDADES_POR_PROGRAMA:
+            actividades = ACTIVIDADES_POR_PROGRAMA[programa]
+        else:
+            actividades = act_df["Actividad Realizada"].dropna().unique().tolist() if not act_df.empty else []
+
         with p2:
-            actividad = st.selectbox("Actividad evaluada o valorada *", actividades, index=None, placeholder="Seleccione una actividad", disabled=not programa)
+            actividad = st.selectbox(
+                "Actividad evaluada o valorada *", actividades, index=None,
+                placeholder="Seleccione una actividad", disabled=not programa, key="actividad"
+            )
 
         responde_a = ""
         if actividad and not act_df.empty and "Responde a:" in act_df.columns:
-            coincidencias = act_df.loc[act_df["Actividad Realizada"] == actividad, "Responde a:"].dropna().tolist()
+            coincidencias = act_df.loc[
+                act_df["Actividad Realizada"].str.casefold() == actividad.casefold(), "Responde a:"
+            ].dropna().tolist()
             responde_a = coincidencias[0] if coincidencias else ""
-            if responde_a:
-                st.text_area("Marco de planificación (tomado del Excel)", value=responde_a, height=80, disabled=True)
+        if responde_a:
+            st.text_area("Marco de planificación (tomado del Excel)", value=responde_a, height=80, disabled=True)
 
         lineas_accion = st.text_area("Nombre de la(s) línea(s) de acción relacionada(s) *", height=100)
 
+    with st.container(border=True):
         st.subheader("4. Meta, avance y evidencia")
         m1, m2 = st.columns(2)
         with m1:
             meta_esperada = st.text_input("Meta esperada *", placeholder="Ejemplo: 12 actividades, 150 personas, 4 centros educativos")
         with m2:
-            avance_porcentaje = st.number_input("Avance en el cumplimiento de la meta (%) *", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+            avance_porcentaje = st.number_input(
+                "Avance en el cumplimiento de la meta (%) *",
+                min_value=0.0, max_value=100.0, value=0.0, step=1.0,
+            )
 
         tiene_evidencia = st.radio("¿Se tiene evidencia del avance de la meta? *", ["Sí", "No"], horizontal=True) == "Sí"
         fotos_subidas = st.file_uploader(
@@ -609,13 +677,12 @@ def main() -> None:
             help="Puede adjuntar varias fotografías. Las imágenes se comprimen automáticamente para el PDF.",
         )
 
+    with st.container(border=True):
         st.subheader("5. Valoración, acuerdos y seguimiento")
         sugerencias = st.text_area("Sugerencias y/o posibilidades de mejora *", height=120)
         acuerdos = st.text_area("Principales acuerdos *", height=120)
         proxima_visita = st.date_input("Fecha de la próxima visita de seguimiento", value=None, format="DD/MM/YYYY")
-
         st.markdown('<p class="required-note">Los campos marcados con * son obligatorios.</p>', unsafe_allow_html=True)
-        enviar = st.form_submit_button("Validar datos y preparar informe", type="primary", use_container_width=True)
 
     st.subheader("6. Georreferenciación")
     st.caption("Puede utilizar el GPS del dispositivo o marcar manualmente el punto exacto en el mapa.")
@@ -644,7 +711,9 @@ def main() -> None:
             nuevo = resultado_mapa["last_clicked"]
             st.session_state.latitud = float(nuevo["lat"])
             st.session_state.longitud = float(nuevo["lng"])
-            st.info("Punto actualizado. Presione nuevamente “Validar datos y preparar informe” para generar el PDF con esta ubicación.")
+            st.info("Punto actualizado. La ubicación seleccionada se incorporará al informe.")
+
+    enviar = st.button("Validar datos y preparar informe", type="primary", use_container_width=True)
 
     if enviar:
         requeridos = {
